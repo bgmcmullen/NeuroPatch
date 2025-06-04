@@ -171,17 +171,27 @@ function testNetwork(input, weights, inputs, outputs, activationFunction, output
   return outputs[outputs.length - 1];
 }
 
-function backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
+function backpropagation(input, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
+	
+  var prevDelta;
   for (var i = weights.length - 1; i >= 0; i--) {
-    gradients[i] = multiplyMatricies(i === weights.length - 1 ? error :
-      multiplyMatrices(gradients[i + 1], transposeMatrix(weights[i + 1])),
+    delta = multiplyMatricies(i === weights.length - 1 ? error :
+      multiplyMatrices(prevDelta, transposeMatrix(weights[i + 1])),
       i === weights.length - 1 ? outputDerivative(inputs[i]) : derivativeFunction(inputs[i]));
+	
+	gradients[i] = multiplyMatrices(transposeMatrix(i < 1 ? input : outputs[i - 1]), delta);
+	prevDelta = delta;
   }
 }
 
-function updateWeights(input, outputs, weights, gradients, learningRate) {
+function updateWeights(input, outputs, weights, gradients, velocity, learningRate) {
+  var momentumCoefficient = .9;
+  for (var i = velocity.length - 1; i >= 0; i--) {
+
+  	velocity[i] = addMatricies(multiplyMatrixByFloat(velocity[i], momentumCoefficient), multiplyMatrixByFloat(gradients[i], learningRate));
+  }
   for (var i = weights.length - 1; i >= 0; i--) {
-    weights[i] = addMatricies(weights[i], multiplyMatrixByFloat(multiplyMatrices(transposeMatrix(i < 1 ? input : outputs[i - 1]), gradients[i]), learningRate));
+    weights[i] = addMatricies(weights[i], velocity[i]);
   }
 }
 
@@ -205,14 +215,19 @@ function train(inputMatrix, outputMatrix, config) {
   var outputFunction = config.outputFunction;
   var outputDerivative = config.outputDerivative;
   var weights = config.weights || [];
+  var velocity = [];
+  
 
 
   if (weights.length === 0) {
     for (var i = 0; i < sizes.length - 1; i++) {
-      weights[i] = buildArray(sizes[i], function () { return buildArray(sizes[i + 1], function () { return Math.random() * 2 - 1 }) });
+      weights[i] = buildArray(sizes[i], function () { return buildArray(sizes[i + 1], function () { return (Math.random() * 2 - 1 ) / 100}) });
     }
   }
 
+  for (var i = 0; i < sizes.length - 1; i++) {
+    velocity[i] = buildArray(sizes[i], function () { return buildArray(sizes[i + 1], function () { return 0 }) });
+  }
 
   // Training loop
   for (var i = 0; i < epochs; i++) {
@@ -223,9 +238,9 @@ function train(inputMatrix, outputMatrix, config) {
     // Calculate error
     var error = subtractMatricies(y, outputs[numLayers - 1]);
 
-    backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
+    backpropagation(X, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
 
-    updateWeights(X, outputs, weights, gradients, learningRate);
+    updateWeights(X, outputs, weights, gradients, velocity, learningRate);
   }
 
   outlet(1, absMatrixMean(error));

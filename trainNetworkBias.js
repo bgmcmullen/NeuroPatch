@@ -1,4 +1,4 @@
-outlets = 2;
+outlets = 3;
 
 function sigmoid(x) {
   return x.map(function (row) { return row.map(function (num) { return sigmoidFunction(num) }) });
@@ -158,9 +158,20 @@ function multiplyMatrixByFloat(matrix, num) {
   return result;
 }
 
-function testNetwork(input, weights, inputs, outputs, activationFunction, outputFunction) {
+function testNetwork(input, weights, inputs, outputs, activationFunction, outputFunction, biases) {
   for (var i = 0; i < weights.length; i++) {
-    inputs[i] = multiplyMatrices(i < 1 ? input : outputs[i - 1], weights[i]);
+	// Expand biases to match the batch size
+    var expandedBiases = [];
+    for (var j = 0; j < input.length; j++) {
+      // Make a shallow copy of the bias row
+      var biasRow = [];
+      for (var k = 0; k < biases[i].length; k++) {
+        biasRow[k] = biases[i][k];
+      }
+      expandedBiases.push(biasRow);
+    }
+	
+    inputs[i] = addMatricies(multiplyMatrices(i < 1 ? input : outputs[i - 1], weights[i]), expandedBiases);
     if (i === weights.length - 1) {
       outputs[i] = outputFunction(inputs[i]);
     } else {
@@ -185,6 +196,33 @@ function updateWeights(input, outputs, weights, gradients, learningRate) {
   }
 }
 
+function updateBiases(biases, gradients, learningRate) {
+  for (var i = 0; i < gradients.length; i++) {
+    const outputDim = gradients[i][0].length;
+    const batchSize = gradients[i].length;
+
+    var biasesGradients = [];
+
+	for (var k = 0; k < outputDim; k++) {
+		biasesGradients.push(0);
+		
+	}
+
+    // Sum over batch
+    for (var j = 0; j < batchSize; j++) {
+      for (var k = 0; k < outputDim; k++) {
+        biasesGradients[k] += (gradients[i][j][k] / batchSize);
+      }
+    }
+
+    // Average and apply learning rate
+    for (var k = 0; k < outputDim; k++) {
+      biases[i][k] += biasesGradients[k] / batchSize * learningRate;
+    }
+  }
+}
+
+
 function train(inputMatrix, outputMatrix, config) {
   var X = inputMatrix;
   var y = outputMatrix;
@@ -205,6 +243,7 @@ function train(inputMatrix, outputMatrix, config) {
   var outputFunction = config.outputFunction;
   var outputDerivative = config.outputDerivative;
   var weights = config.weights || [];
+  var biases = config.biases || [];
 
 
   if (weights.length === 0) {
@@ -213,33 +252,50 @@ function train(inputMatrix, outputMatrix, config) {
     }
   }
 
+  if (biases.length === 0) {
+    for (var i = 0; i < sizes.length - 1; i++) {
+      biases[i] = buildArray(sizes[i + 1], function () { return Math.random() * 2 - 1 });
+    }
+  }
 
   // Training loop
   for (var i = 0; i < epochs; i++) {
 
 
-    testNetwork(X, weights, inputs, outputs, activationFunction, outputFunction);
+    testNetwork(X, weights, inputs, outputs, activationFunction, outputFunction, biases);
 
     // Calculate error
     var error = subtractMatricies(y, outputs[numLayers - 1]);
 
     backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
 
+	updateBiases(biases, gradients, learningRate);
+
     updateWeights(X, outputs, weights, gradients, learningRate);
   }
 
   outlet(1, absMatrixMean(error));
 
-  return weights;
+  return {weights: weights, biases: biases};
 }
 
 
 
 
-function colorBackground(input, activationFunction, outputFunction, weights, colorInterval, lcd) {
+function colorBackground(input, activationFunction, outputFunction, weights, colorInterval, lcd, biases) {
   var currentOutput = [[input[0] / colorInterval, input[1] / colorInterval]];
   for (var i = 0; i < weights.length; i++) {
-    var currentInput = multiplyMatrices(currentOutput, weights[i]);
+	// Expand biases to match the batch size
+    var expandedBiases = [];
+    for (var j = 0; j < currentOutput.length; j++) {
+      // Make a shallow copy of the bias row
+      var biasRow = [];
+      for (var k = 0; k < biases[i].length; k++) {
+        biasRow[k] = biases[i][k];
+      }
+      expandedBiases.push(biasRow);
+    }
+    var currentInput = addMatricies(multiplyMatrices(currentOutput, weights[i]), expandedBiases);
     if (i === weights.length - 1) {
       currentOutput = outputFunction(currentInput);
     } else {
@@ -247,6 +303,7 @@ function colorBackground(input, activationFunction, outputFunction, weights, col
     }
 
   }
+
   lcd.message("frgb", currentOutput[0][0] * 255, currentOutput[0][1] * 255, currentOutput[0][2] * 255);
   lcd.message("pensize", 1, 1);
   lcd.message("paintrect", (input[0] / colorInterval) * 400,
@@ -256,10 +313,11 @@ function colorBackground(input, activationFunction, outputFunction, weights, col
 }
 
 
-function trainNetwork(input, output, layers, epochs, learningRate, activation, weights, outputActivation) {
+function trainNetwork(input, output, layers, epochs, learningRate, activation, weights, outputActivation, biases) {
 
   var activationFunction = null;
   var derivativeFunction = null;
+
 
 
 
@@ -269,6 +327,12 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     weights = JSON.parse(weights);
   }
 
+
+  if (biases === "empty") {
+    biases = [];
+  } else {
+    biases = JSON.parse(biases);
+  }
 
 
   if (activation === "sigmoid") {
@@ -323,21 +387,25 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     derivativeFunction: derivativeFunction,
     outputFunction: outputFunction,
     outputDerivative: outputDerivative,
-    weights: weights
+    weights: weights,
+    biases: biases
   }
 
 
-  var weights = train(X, y, config);
+  var result = train(X, y, config);
+  var weights = result.weights;
+  var biases = result.biases;
 
-  var lcd = this.patcher.getnamed("lcd_panel2");
+  var lcd = this.patcher.getnamed("lcd_panel3");
 
   var colorInterval = 100;
 
   for (var i = 0; i < colorInterval; i++) {
     for (var j = 0; j < colorInterval; j++) {
-      colorBackground([i, j], activationFunction, outputFunction, weights, colorInterval, lcd);
+      colorBackground([i, j], activationFunction, outputFunction, weights, colorInterval, lcd, biases);
     }
   }
   outlet(0, JSON.stringify(weights));
+  outlet(2, JSON.stringify(biases));
 }
 

@@ -1,4 +1,4 @@
-outlets = 2;
+outlets = 3;
 
 function sigmoid(x) {
   return x.map(function (row) { return row.map(function (num) { return sigmoidFunction(num) }) });
@@ -90,6 +90,20 @@ function transposeMatrix(matrix) {
   return result;
 }
 
+function subtractMatricies(X, Y) {
+  if (X.length !== Y.length || X[0].length !== Y[0].length) {
+    throw new Error("Invalid Matrix subtraction");
+    return;
+  }
+  var result = buildArray(X.length, function () { return [] });
+  for (var i = 0; i < X.length; i++) {
+    for (var j = 0; j < X[0].length; j++) {
+      result[i][j] = X[i][j] - Y[i][j];
+    }
+  }
+  return result;
+}
+
 function multiplyMatrices(X, Y) {
   if (X[0].length !== Y.length) {
     throw new Error("Invalid Matrix multiplication");
@@ -108,32 +122,17 @@ function multiplyMatrices(X, Y) {
   return result;
 }
 
-function subtractMatricies(X, Y) {
-  if (X.length !== Y.length || X[0].length !== Y[0].length) {
-    throw new Error("Invalid Matrix subtraction");
-    return;
-  }
-  var result = buildArray(X.length, function () { return [] });
-  for (var i = 0; i < X.length; i++) {
-    for (var j = 0; j < X[0].length; j++) {
-      result[i][j] = X[i][j] - Y[i][j];
+function elementwiseMultiply(A, B) {
+  const result = [];
+  for (var i = 0; i < A.length; i++) {
+    result[i] = [];
+    for (var j = 0; j < A[0].length; j++) {
+      result[i][j] = A[i][j] * B[i][j];
     }
   }
   return result;
 }
 
-function multiplyMatricies(X, Y) {
-  if (X.length !== Y.length || X[0].length !== Y[0].length) {
-    throw new Error("Invalid Matrix multiplication");
-  }
-  var result = buildArray(X.length, function () { return [] });
-  for (var i = 0; i < X.length; i++) {
-    for (var j = 0; j < X[0].length; j++) {
-      result[i][j] = X[i][j] * Y[i][j];
-    }
-  }
-  return result;
-}
 
 function addMatricies(X, Y) {
   if (X.length !== Y.length || X[0].length !== Y[0].length) {
@@ -158,30 +157,64 @@ function multiplyMatrixByFloat(matrix, num) {
   return result;
 }
 
+function multiplyMatrcesElementwise(X, Y) {
+  if (X.length !== Y.length || X[0].length !== Y[0].length) {
+    throw new Error("Invalid Matrix multiplication element wise");
+  }
+  var result = buildArray(X.length, function () { return [] });
+  for (var i = 0; i < X.length; i++) {
+    for (var j = 0; j < X[0].length; j++) {
+      result[i][j] = X[i][j] * Y[i][j];
+    }
+  }
+  return result;
+}
+
 function testNetwork(input, weights, inputs, outputs, activationFunction, outputFunction) {
   for (var i = 0; i < weights.length; i++) {
-    inputs[i] = multiplyMatrices(i < 1 ? input : outputs[i - 1], weights[i]);
+    inputs[i] = multiplyMatrices(i < 1 ? input : outputs[i - 1], transposeMatrix(weights[i]));
     if (i === weights.length - 1) {
       outputs[i] = outputFunction(inputs[i]);
     } else {
       outputs[i] = activationFunction(inputs[i]);
     }
-
   }
   return outputs[outputs.length - 1];
 }
 
-function backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
-  for (var i = weights.length - 1; i >= 0; i--) {
-    gradients[i] = multiplyMatricies(i === weights.length - 1 ? error :
-      multiplyMatrices(gradients[i + 1], transposeMatrix(weights[i + 1])),
-      i === weights.length - 1 ? outputDerivative(inputs[i]) : derivativeFunction(inputs[i]));
+function backpropagation(X, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
+
+  var errorGradient = transposeMatrix(multiplyMatrcesElementwise(error, derivativeFunction(outputs[outputs.length - 1])));
+  var prevDelta = errorGradient;
+
+  for (var i = weights.length - 2; i >= 0; i--) {
+    var weightedDelta = transposeMatrix(multiplyMatrices(transposeMatrix(weights[i + 1]), prevDelta));
+
+
+    var delta = multiplyMatrcesElementwise(weightedDelta, derivativeFunction(inputs[i]));
+    prevDelta = transposeMatrix(delta);
+    gradients[i + 1] = transposeMatrix(multiplyMatrices(transposeMatrix(delta), outputs[i + 1]));
+
   }
+  weightedDelta = transposeMatrix(multiplyMatrices(transposeMatrix(weights[0]), prevDelta));
+
+  delta = multiplyMatrcesElementwise(weightedDelta, derivativeFunction(X));
+  prevDelta = transposeMatrix(delta);
+  gradients[0] = transposeMatrix(multiplyMatrices(transposeMatrix(delta), outputs[0]));
+
 }
 
-function updateWeights(input, outputs, weights, gradients, learningRate) {
+
+function updateWeights(input, outputs, weights, gradients, velocity, learningRate) {
+  var momentumCoefficient = .9;
+
+  // for (var i = velocity.length - 1; i >= 0; i--) {
+  //   velocity[i] = addMatricies(multiplyMatrixByFloat(velocity[i], momentumCoefficient), gradients[i]);
+  // }
+
+
   for (var i = weights.length - 1; i >= 0; i--) {
-    weights[i] = addMatricies(weights[i], multiplyMatrixByFloat(multiplyMatrices(transposeMatrix(i < 1 ? input : outputs[i - 1]), gradients[i]), learningRate));
+    weights[i] = subtractMatricies(weights[i], multiplyMatrixByFloat(gradients[i], learningRate));
   }
 }
 
@@ -205,32 +238,36 @@ function train(inputMatrix, outputMatrix, config) {
   var outputFunction = config.outputFunction;
   var outputDerivative = config.outputDerivative;
   var weights = config.weights || [];
+  var velocity = [];
 
 
   if (weights.length === 0) {
     for (var i = 0; i < sizes.length - 1; i++) {
-      weights[i] = buildArray(sizes[i], function () { return buildArray(sizes[i + 1], function () { return Math.random() * 2 - 1 }) });
+      weights[i] = buildArray(sizes[i + 1], function () { return buildArray(sizes[i], function () { return Math.random() * 2 - 1 }) });
     }
   }
 
+  for (var i = 0; i < sizes.length - 1; i++) {
+    velocity[i] = buildArray(sizes[i + 1], function () { return buildArray(sizes[i], function () { return 0 }) });
+  }
 
   // Training loop
   for (var i = 0; i < epochs; i++) {
 
-
     testNetwork(X, weights, inputs, outputs, activationFunction, outputFunction);
 
     // Calculate error
-    var error = subtractMatricies(y, outputs[numLayers - 1]);
+    var error = subtractMatricies(outputs[numLayers - 1], y);
 
-    backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
+    backpropagation(X, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
 
-    updateWeights(X, outputs, weights, gradients, learningRate);
+
+    updateWeights(X, outputs, weights, gradients, velocity, learningRate);
   }
 
-  outlet(1, absMatrixMean(error));
+  outlet(2, absMatrixMean(error));
 
-  return weights;
+  return { weights: weights, velocity: velocity };
 }
 
 
@@ -239,13 +276,12 @@ function train(inputMatrix, outputMatrix, config) {
 function colorBackground(input, activationFunction, outputFunction, weights, colorInterval, lcd) {
   var currentOutput = [[input[0] / colorInterval, input[1] / colorInterval]];
   for (var i = 0; i < weights.length; i++) {
-    var currentInput = multiplyMatrices(currentOutput, weights[i]);
+    currentOutput = multiplyMatrices(currentOutput, transposeMatrix(weights[i]));
     if (i === weights.length - 1) {
-      currentOutput = outputFunction(currentInput);
+      currentOutput = outputFunction(currentOutput);
     } else {
-      currentOutput = activationFunction(currentInput);
+      currentOutput = activationFunction(currentOutput);
     }
-
   }
   lcd.message("frgb", currentOutput[0][0] * 255, currentOutput[0][1] * 255, currentOutput[0][2] * 255);
   lcd.message("pensize", 1, 1);
@@ -327,9 +363,11 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
   }
 
 
-  var weights = train(X, y, config);
+  var result = train(X, y, config);
+  var weights = result.weights;
+  var velocity = result.velocity;
 
-  var lcd = this.patcher.getnamed("lcd_panel2");
+  var lcd = this.patcher.getnamed("lcd_panel");
 
   var colorInterval = 100;
 
@@ -339,5 +377,6 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     }
   }
   outlet(0, JSON.stringify(weights));
+  outlet(1, JSON.stringify(velocity));
 }
 

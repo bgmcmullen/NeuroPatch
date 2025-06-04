@@ -118,13 +118,12 @@ function runNetwork(input, weights, activation, outputActivation) {
 		
   	var currentOutput = input;
   	for (var i = 0; i < weights.length; i++) {
-    	var currentInput = multiplyMatrices(currentOutput, weights[i]);
-		if(i === weights.length - 1) {
-			currentOutput = outputFunction(currentInput);
-		} else {
-			currentOutput = activationFunction(currentInput);
-		}
-    	
-  	}
+    currentOutput = multiplyMatrices(currentOutput, transposeMatrix(weights[i]));
+    if (i === weights.length - 1) {
+      currentOutput = outputFunction(currentOutput);
+    } else {
+      currentOutput = activationFunction(currentOutput);
+    }
+  }
 		outlet(0, currentOutput[0]);
 }

@@ -57,9 +57,9 @@ function transposeMatrix(matrix) {
   return result;
 }
 
-function multiplyMatrices(X, Y) {
+function dotProductMatricies(X, Y) {
   if (X[0].length !== Y.length) {
-    throw new Error("Invalid Matrix multiplication");
+    throw new Error("Invalid Matrix dot multiplication");
   }
   var result = buildArray(X.length, function() {return []});
   var Y_T = transposeMatrix(Y);
@@ -118,7 +118,7 @@ function runNetwork(input, weights, activation, outputActivation) {
 		
   	var currentOutput = input;
   	for (var i = 0; i < weights.length; i++) {
-    	var currentInput = multiplyMatrices(currentOutput, weights[i]);
+    	var currentInput = dotProductMatricies(currentOutput, weights[i]);
 		if(i === weights.length - 1) {
 			currentOutput = outputFunction(currentInput);
 		} else {

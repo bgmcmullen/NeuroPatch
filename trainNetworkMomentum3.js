@@ -1,4 +1,4 @@
-outlets = 2;
+outlets = 4;
 
 function sigmoid(x) {
   return x.map(function (row) { return row.map(function (num) { return sigmoidFunction(num) }) });
@@ -158,9 +158,20 @@ function multiplyMatrixByFloat(matrix, num) {
   return result;
 }
 
-function testNetwork(input, weights, inputs, outputs, activationFunction, outputFunction) {
+function testNetwork(input, weights, inputs, outputs, activationFunction, outputFunction, biases) {
   for (var i = 0; i < weights.length; i++) {
-    inputs[i] = multiplyMatrices(i < 1 ? input : outputs[i - 1], weights[i]);
+	// Expand biases to match the batch size
+    var expandedBiases = [];
+    for (var j = 0; j < input.length; j++) {
+      // Make a shallow copy of the bias row
+      var biasRow = [];
+      for (var k = 0; k < biases[i].length; k++) {
+        biasRow[k] = biases[i][k];
+      }
+      expandedBiases.push(biasRow);
+    }
+	
+    inputs[i] = addMatricies(multiplyMatrices(i < 1 ? input : outputs[i - 1], weights[i]), expandedBiases);
     if (i === weights.length - 1) {
       outputs[i] = outputFunction(inputs[i]);
     } else {
@@ -171,7 +182,7 @@ function testNetwork(input, weights, inputs, outputs, activationFunction, output
   return outputs[outputs.length - 1];
 }
 
-function backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
+function backpropagation(input, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative) {
   for (var i = weights.length - 1; i >= 0; i--) {
     gradients[i] = multiplyMatricies(i === weights.length - 1 ? error :
       multiplyMatrices(gradients[i + 1], transposeMatrix(weights[i + 1])),
@@ -179,11 +190,49 @@ function backpropagation(error, weights, gradients, inputs, outputs, derivativeF
   }
 }
 
-function updateWeights(input, outputs, weights, gradients, learningRate) {
+function updateWeights(input, outputs, weights, gradients, velocity, learningRate) {
+  var momentumCoefficient = .9;
+  for (var i = velocity.length - 1; i >= 0; i--) {
+	
+	var weightGradients = multiplyMatrices(transposeMatrix(i < 1 ? input : outputs[i - 1]), gradients[i]);
+
+  	velocity[i] = addMatricies(multiplyMatrixByFloat(velocity[i], momentumCoefficient), multiplyMatrixByFloat(weightGradients, learningRate));
+  }
   for (var i = weights.length - 1; i >= 0; i--) {
-    weights[i] = addMatricies(weights[i], multiplyMatrixByFloat(multiplyMatrices(transposeMatrix(i < 1 ? input : outputs[i - 1]), gradients[i]), learningRate));
+    weights[i] = addMatricies(weights[i], velocity[i]);
   }
 }
+
+
+function updateBiases(biases, gradients, biasVelocities, learningRate) {
+  var momentumCoefficient = .9;
+  for (var i = 0; i < gradients.length; i++) { 
+    const outputDim = gradients[i][0].length;
+    const batchSize = gradients[i].length;
+    
+
+    var biasesGradients = [];
+
+	for (var k = 0; k < outputDim; k++) {
+		biasesGradients.push(0);
+	}
+
+    // Sum over batch
+    for (var j = 0; j < batchSize; j++) {
+      for (var k = 0; k < outputDim; k++) {
+        biasesGradients[k] += gradients[i][j][k];
+      }
+    }
+
+    // Average and apply learning rate
+    for (var k = 0; k < outputDim; k++) {
+      biasVelocities[i][k] = momentumCoefficient * biasVelocities[i][k] - learningRate * (biasesGradients[k] / batchSize);
+      biases[i][k] -= biasVelocities[i][k];
+    }
+  }
+}
+
+
 
 function train(inputMatrix, outputMatrix, config) {
   var X = inputMatrix;
@@ -205,6 +254,13 @@ function train(inputMatrix, outputMatrix, config) {
   var outputFunction = config.outputFunction;
   var outputDerivative = config.outputDerivative;
   var weights = config.weights || [];
+  var biases = config.biases || [];
+  var velocity = config.velocity || [];
+  var biasVelocities = config.biasVelocities || [];
+
+  for (var i = 0; i < sizes.length - 1; i++) {
+    velocity[i] = buildArray(sizes[i], function () { return buildArray(sizes[i + 1], function () { return 0 }) });
+  }
 
 
   if (weights.length === 0) {
@@ -213,33 +269,53 @@ function train(inputMatrix, outputMatrix, config) {
     }
   }
 
+  if (biases.length === 0) {
+    for (var i = 0; i < sizes.length - 1; i++) {
+      biases[i] = buildArray(sizes[i + 1], function () { return Math.random() * 2 - 1 });
+    }
+  }
+
+  for (var i = 0; i < sizes.length - 1; i++) {
+      biasVelocities[i] = buildArray(sizes[i + 1], function () { return 0 });
+  }
 
   // Training loop
   for (var i = 0; i < epochs; i++) {
 
-
-    testNetwork(X, weights, inputs, outputs, activationFunction, outputFunction);
+    testNetwork(X, weights, inputs, outputs, activationFunction, outputFunction, biases);
 
     // Calculate error
     var error = subtractMatricies(y, outputs[numLayers - 1]);
 
-    backpropagation(error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
+    backpropagation(X, error, weights, gradients, inputs, outputs, derivativeFunction, outputDerivative);
 
-    updateWeights(X, outputs, weights, gradients, learningRate);
+	updateBiases(biases, gradients, biasVelocities, learningRate);
+
+    updateWeights(X, outputs, weights, gradients, velocity, learningRate);
   }
 
   outlet(1, absMatrixMean(error));
 
-  return weights;
+  return {weights: weights, biases: biases, velocity: velocity, biasVelocities: biasVelocities};
 }
 
 
 
 
-function colorBackground(input, activationFunction, outputFunction, weights, colorInterval, lcd) {
+function colorBackground(input, activationFunction, outputFunction, weights, colorInterval, lcd, biases) {
   var currentOutput = [[input[0] / colorInterval, input[1] / colorInterval]];
   for (var i = 0; i < weights.length; i++) {
-    var currentInput = multiplyMatrices(currentOutput, weights[i]);
+	// Expand biases to match the batch size
+    var expandedBiases = [];
+    for (var j = 0; j < currentOutput.length; j++) {
+      // Make a shallow copy of the bias row
+      var biasRow = [];
+      for (var k = 0; k < biases[i].length; k++) {
+        biasRow[k] = biases[i][k];
+      }
+      expandedBiases.push(biasRow);
+    }
+    var currentInput = addMatricies(multiplyMatrices(currentOutput, weights[i]), expandedBiases);
     if (i === weights.length - 1) {
       currentOutput = outputFunction(currentInput);
     } else {
@@ -247,6 +323,7 @@ function colorBackground(input, activationFunction, outputFunction, weights, col
     }
 
   }
+
   lcd.message("frgb", currentOutput[0][0] * 255, currentOutput[0][1] * 255, currentOutput[0][2] * 255);
   lcd.message("pensize", 1, 1);
   lcd.message("paintrect", (input[0] / colorInterval) * 400,
@@ -255,13 +332,10 @@ function colorBackground(input, activationFunction, outputFunction, weights, col
     (input[1] / colorInterval) * 400 + 400 / colorInterval);
 }
 
-
-function trainNetwork(input, output, layers, epochs, learningRate, activation, weights, outputActivation) {
+function trainNetwork(input, output, layers, epochs, learningRate, activation, weights, outputActivation, biases, velocities) {
 
   var activationFunction = null;
   var derivativeFunction = null;
-
-
 
   if (weights === "empty") {
     weights = [];
@@ -269,6 +343,18 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     weights = JSON.parse(weights);
   }
 
+  if (biases === "empty") {
+    biases = [];
+  } else {
+    biases = JSON.parse(biases);
+  }
+
+
+  if (velocities === "empty") {
+    velocities = [];
+  } else {
+    velocities = JSON.parse(velocities);
+  }
 
 
   if (activation === "sigmoid") {
@@ -323,21 +409,30 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     derivativeFunction: derivativeFunction,
     outputFunction: outputFunction,
     outputDerivative: outputDerivative,
-    weights: weights
+    weights: weights,
+    biases: biases,
+    velocity: velocities[0],
+    biasVelocities: velocities[1]
   }
 
 
-  var weights = train(X, y, config);
+  var result = train(X, y, config);
+  var weights = result.weights;
+  var biases = result.biases;
+  var biasVelocities = result.biasVelocities;
+  var velocity = result.velocity;
 
-  var lcd = this.patcher.getnamed("lcd_panel2");
+  var lcd = this.patcher.getnamed("lcd_panel");
 
   var colorInterval = 100;
 
   for (var i = 0; i < colorInterval; i++) {
     for (var j = 0; j < colorInterval; j++) {
-      colorBackground([i, j], activationFunction, outputFunction, weights, colorInterval, lcd);
+      colorBackground([i, j], activationFunction, outputFunction, weights, colorInterval, lcd, biases);
     }
   }
   outlet(0, JSON.stringify(weights));
+  outlet(2, JSON.stringify(biases, biasVelocities));
+  outlet(3, JSON.stringify([velocity, biasVelocities]));
 }
 
