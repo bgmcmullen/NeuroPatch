@@ -207,8 +207,8 @@ function updateWeights(input, outputs, weights, gradients, velocity, learningRat
 function updateBiases(biases, gradients, biasVelocities, learningRate) {
   var momentumCoefficient = .9;
   for (var i = 0; i < gradients.length; i++) { 
-    const outputDim = gradients[i][0].length;
-    const batchSize = gradients[i].length;
+    var outputDim = gradients[i][0].length;
+    var batchSize = gradients[i].length;
     
 
     var biasesGradients = [];
@@ -432,7 +432,7 @@ function trainNetwork(input, output, layers, epochs, learningRate, activation, w
     }
   }
   outlet(0, JSON.stringify(weights));
-  outlet(2, JSON.stringify(biases, biasVelocities));
+  outlet(2, JSON.stringify(biases));
   outlet(3, JSON.stringify([velocity, biasVelocities]));
 }
 
